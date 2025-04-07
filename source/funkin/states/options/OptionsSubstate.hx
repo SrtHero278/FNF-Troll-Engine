@@ -144,6 +144,7 @@ class OptionsSubstate extends MusicBeatSubstate
 				[
 					"lowQuality",
 					"globalAntialiasing",
+					"cacheOnGPU",
 					"multicoreLoading",
 					"optimizeHolds",
 					"holdSubdivs",
@@ -588,7 +589,7 @@ class OptionsSubstate extends MusicBeatSubstate
 		optionCamera.follow(camFollowPos);
 
 		////
-		final backdropGraphic = Paths.image("optionsMenu/backdrop");
+		final backdropGraphic = Paths.image("optionsMenu/backdrop", null, false);
 		final backdropSlice = [22, 22, 89, 89];
 		final tabButtonHeight = 44;
 		final tabButtonPadding = 3;
@@ -1878,23 +1879,22 @@ class TextFormats {
 	};
 	
 	public static final OPT_NAME:FlxTextFormatData = {
-		font: "calibri.ttf",
-		
-		size: 28,
+		font: "quantico.ttf",	
+		size: 25,
 		color: 0xFFFFFFFF,
 		alignment: LEFT
 	};
 
 	public static final OPT_VALUE_TEXT:FlxTextFormatData = {
-		font: "calibri.ttf",
-		size: 24,
+		font: "quantico.ttf",
+		size: 22,
 		color: 0xFFFFFFFF,
 		alignment: LEFT
 	};
 	
 	public static final OPT_DROPDOWN_OPTION_TEXT:FlxTextFormatData = {
-		font: "calibri.ttf",
-		size: 24,
+		font: "quantico.ttf",
+		size: 22,
 		color: 0xFFFFFFFF,
 	};
 
