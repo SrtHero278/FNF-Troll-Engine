@@ -12,6 +12,7 @@ import funkin.states.LoadingState;
 import funkin.states.PlayState;
 import funkin.states.editors.ChartingState;
 import funkin.data.Section.SwagSection;
+import funkin.data.BaseSong;
 import haxe.io.Path;
 import haxe.Json;
 
@@ -19,21 +20,27 @@ using funkin.CoolerStringTools;
 using StringTools;
 
 typedef SwagSong = {
-	//// internal
-	@:optional var path:String;
-	var validScore:Bool;
+	////
+	var notes:Array<SwagSection>;
+	
+	var keyCount:Int;
+
+	/** Offsets the chart notes **/
+	var offset:Float;
+	
+	/** How spread apart the notes should be **/
+	var speed:Float;
 
 	////
 	var song:String;
-	var bpm:Float;
-	var tracks:SongTracks; // currently used
-	
-	var speed:Float;
-	var keyCount:Int;
-	var notes:Array<SwagSection>;
-	var events:Array<Array<Dynamic>>;
-	var offset:Float; // Offsets the chart
 
+	/** Starting BPM of the song **/
+	var bpm:Float;
+	
+	/** Song track data containing the file names of the song's tracks **/
+	var tracks:SongTracks;
+
+	////
 	var player1:Null<String>;
 	var player2:Null<String>;
 	var gfVersion:Null<String>;
@@ -42,12 +49,17 @@ typedef SwagSong = {
 
 	var arrowSkin:String;
 	var splashSkin:String;
-	
-	//// Used for song info showed on the pause menu
+
+	////
+	@:optional var events:Array<Array<Dynamic>>;
 	@:optional var metadata:SongMetadata;
+
+	//// internal
+	@:optional var path:String;
+	var validScore:Bool;
 }
 
-typedef EventNote = {
+typedef PsychEvent = {
 	strumTime:Float,
 	event:String,
 	value1:String,
@@ -63,8 +75,6 @@ typedef JsonSong = {
 	@:optional var mania:Int; // vs shaggy
 	@:optional var keyCount:Int;
 	@:optional var offset:Float;
-
-	// @:optional var info:Array<String>; // old te
 }
 
 typedef SongTracks = {
@@ -75,69 +85,54 @@ typedef SongTracks = {
 
 typedef SongMetadata =
 {
-	?songName:String,
-	?artist:String,
-	?charter:String,
-	?modcharter:String,
-	?extraInfo:Array<String>,
+	/** The display name of this song **/
+	var ?songName:String;
+	
+	@:optional var artist:String;
+	@:optional var charter:String;
+	@:optional var modcharter:String;
+	@:optional var extraInfo:Array<String>;
+	
+	@:optional var freeplayIcon:String;
+	@:optional var freeplayBgGraphic:String;
+	@:optional var freeplayBgColor:String;
 }
 
 inline final DEFAULT_CHART_ID = "normal";
-class Song
+final defaultDifficultyOrdering:Array<String>  = ["easy", "normal", "hard", "erect", "nightmare"];
+
+class Song extends BaseSong
 {
-	public final songId:String;
-	public final folder:String = '';
-
 	public var songPath(get, default):String;
-	public var charts(get, null):Array<String>;
+	
+	private var _charts:Array<String> = null;
 	private var metadataCache = new Map<String, SongMetadata>();
-
-	#if PE_MOD_COMPATIBILITY
-	private final defaultSongPath:String;
-	private final dataPath:String;
-
-	inline function isUsingDefaultSongPath():Bool {
-		@:bypassAccessor
-		return this.songPath == null;
-	}
-	#end
 
 	public function new(songId:String, ?folder:String)
 	{
-		this.songId = songId;
-		this.folder = folder ?? '';
-		#if !PE_MOD_COMPATIBILITY
+		super(songId, folder);
 		this.songPath = Paths.getFolderPath(this.folder) + '/songs/$songId';
-		#else
-		var contentFolder = Paths.getFolderPath(this.folder);
-		this.defaultSongPath = '$contentFolder/songs/$songId';
-		this.dataPath = '$contentFolder/data/$songId';
-		#end
 	}
 
+	/**
+	 * Returns a path to a file of name fileName that belongs to this song
+	**/
 	public function getSongFile(fileName:String) {
-		var path = '$songPath/$fileName';
+		return '$songPath/$fileName';
+	}
 
-		#if PE_MOD_COMPATIBILITY
-		if (isUsingDefaultSongPath() && !Paths.exists(path)) {
-			var pp = '$dataPath/$fileName';
-			if (Paths.exists(pp)) path = pp;
+	public function play(chartId:String = '') {
+		if (chartId == "") {
+			var charts = getCharts();
+			chartId = charts.contains(DEFAULT_CHART_ID) ? DEFAULT_CHART_ID : charts[0];
 		}
-		#end
 
-		return path;
+		Song.playSong(this, chartId);
 	}
-
-	public function play(?chartName:String = ''){
-		Song.playSong(this, chartName);
-	}
-
-	public function toString()
-		return '$folder:$songId';
 
 	/** get uncached metadata **/
-	private function _getMetadata(chart:String):Null<SongMetadata> {
-		var suffix = getDifficultyFileSuffix(chart);
+	private function _getMetadata(chartId:String):Null<SongMetadata> {
+		var suffix = getDifficultyFileSuffix(chartId);
 		var fileName:String = 'metadata' + suffix + '.json';
 		var path:String = getSongFile(fileName);
 		return Paths.getJson(path);
@@ -259,15 +254,16 @@ class Song
 		#end
 	}
 
-	//
-	function get_charts() 
-		return charts ?? (charts = Song.getCharts(this));
+	public function getCharts():Array<String>
+		return _charts ?? (_charts = _getCharts());
 
+	//
 	function get_songPath()
-		return songPath #if PE_MOD_COMPATIBILITY ?? defaultSongPath #end;
+		return songPath;
 
 	////
 
+	/** Return an array of strings related to the song's credits **/
 	public static function getMetadataInfo(metadata:SongMetadata):Array<String> {
 		var info:Array<String> = [];
 		
@@ -334,19 +330,17 @@ class Song
 	}
 	#end
 
-	public static function getCharts(song:Song):Array<String>
-	{
-		Paths.currentModDirectory = song.folder;
-		
-		final songId:String = song.songId;
+	private function _getCharts():Array<String>
+	{		
+		final songPath = getSongFile("");
 		final charts:Map<String, Bool> = [];
 
-		#if USING_MOONCHART
-		var folder:String = '';
-		
+		Paths.currentModDirectory = folder;
+
+		#if USING_MOONCHART		
 		function processFileName(unprocessedName:String) {
 			var fileName:String = unprocessedName.toLowerCase();
-			var filePath:String = folder + unprocessedName;
+			var filePath:String = songPath + unprocessedName;
 
 			if (!isAMoonchartRecognizedFile(fileName))
 				return;
@@ -396,71 +390,29 @@ class Song
 			}
 		}
 
-		if (song.folder == "") {
-			folder = Paths.getPreloadPath('songs/$songId/');
-			Paths.iterateDirectory(folder, processFileName);
-		}
-		#if MODS_ALLOWED
-		else {
-			////
+		////
+		{
 			var spoon:Array<String> = [];
 			var crumb:Array<String> = [];
 
-			folder = Paths.mods('${song.folder}/songs/$songId/');
-			Paths.iterateDirectory(folder, (fileName)->{
+			Paths.iterateDirectory(songPath, (fileName)->{
 				if (isAMoonchartRecognizedFile(fileName)){
-					spoon.push(folder+fileName);
+					spoon.push(songPath+fileName);
 					crumb.push(fileName);
 				}
 			});
 
 			var ALL_FILES_DETECTED_FORMAT = findFormat(spoon);
 			if (ALL_FILES_DETECTED_FORMAT == FNF_VSLICE) {
-				var chartsFilePath:String = folder + songId + '-chart.json';
-				var metadataPath:String = folder + songId + '-metadata.json';
+				var chartsFilePath:String = getSongFile('$songId-chart.json');
+				var metadataPath:String = getSongFile('$songId-metadata.json');
 				var chart = new moonchart.formats.fnf.FNFVSlice().fromFile(chartsFilePath, metadataPath);
 				for (diff in chart.diffs) charts.set(diff, true);
 				
 			}else {
 				for (fileName in crumb) processFileName(fileName);
 			}
-
-			////
-			#if PE_MOD_COMPATIBILITY
-			folder = Paths.mods('${song.folder}/data/$songId/');
-			Paths.iterateDirectory(folder, processFileName);
-			#end
 		}
-		#end
-
-		var allCharts:Array<String> = [for (name in charts.keys()) name];
-		var chartNames:Array<String> = [];
-
-		for (name in allCharts)
-			chartNames.push(name);
-
-
-		// stolen from v-slice lol!
-		var defaultDifficultyOrdering:Array<String>  = ["easy", "normal", "hard", "erect", "nightmare"];
-		chartNames.sort((a, b)->{
-			a = a.toLowerCase();
-			b = b.toLowerCase();
-			if(a==b)return 0;
-
-			var aHasDefault = defaultDifficultyOrdering.contains(a);
-			var bHasDefault = defaultDifficultyOrdering.contains(b);
-			if (aHasDefault && bHasDefault)
-				return defaultDifficultyOrdering.indexOf(a) - defaultDifficultyOrdering.indexOf(b);
-			else if(aHasDefault)
-				return 1;
-			else if(bHasDefault)
-				return -1;
-
-			return a > b ? -1 : 1;
-			
-		});
-
-		return chartNames;
 		#else
 		
 		function processFileName(unprocessedName:String)
@@ -476,19 +428,36 @@ class Song
 
 		}
 
-		var contentPath = Paths.getFolderPath(song.folder);
-		#if PE_MOD_COMPATIBILITY
-		Paths.iterateDirectory('$contentPath/data/$songId/', processFileName);
+		Paths.iterateDirectory(songPath, processFileName);		
 		#end
-		Paths.iterateDirectory('$contentPath/songs/$songId/', processFileName);
-		
-		return [for (name in charts.keys()) name];
-		#end
+
+		var chartNames:Array<String> = [for (name in charts.keys()) name];
+		chartNames.sort(sortChartDifficulties);
+		return chartNames;
 	}
 
 	public inline static function getDifficultyFileSuffix(diff:String) {
 		diff = Paths.formatToSongPath(diff);
 		return (diff=="" || diff=="normal") ? "" : '-$diff';
+	}
+
+	public static function sortChartDifficulties(a:String, b:String) {
+		// stolen from v-slice lol!
+
+		a = a.toLowerCase();
+		b = b.toLowerCase();
+		if(a==b)return 0;
+
+		var aHasDefault = defaultDifficultyOrdering.contains(a);
+		var bHasDefault = defaultDifficultyOrdering.contains(b);
+		if (aHasDefault && bHasDefault)
+			return defaultDifficultyOrdering.indexOf(a) - defaultDifficultyOrdering.indexOf(b);
+		else if(aHasDefault)
+			return 1;
+		else if(bHasDefault)
+			return -1;
+
+		return a > b ? -1 : 1;
 	}
 
 	private static function _parseSongJson(filePath:String, isChartJson:Bool = true):SwagSong {
@@ -537,12 +506,6 @@ class Song
 	{
 		var path:String = Paths.formatToSongPath(folder) + '/' + Paths.formatToSongPath(jsonInput) + '.json';
 		var fullPath = Paths.getPath('songs/$path', false);
-
-		#if PE_MOD_COMPATIBILITY
-		if (!Paths.exists(fullPath))
-			fullPath = Paths.getPath('data/$path', false);
-		#end
-
 		return parseSongJson(fullPath);
 	}
 
@@ -676,11 +639,7 @@ class Song
 
 				//// 2
 				if (swagJson.path==null) return true;
-				var jsonPath:Path = new Path(swagJson.path
-					#if PE_MOD_COMPATIBILITY
-					.replace("data/", "songs/")
-					#end);
-
+				var jsonPath:Path = new Path(swagJson.path);
 				var folderPath = jsonPath.dir;
 				if (folderPath == null) return true; // could mean that it's somehow on the same folder as the exe but fuck it
 
@@ -714,7 +673,7 @@ class Song
 		return swagJson;
 	}
 
-	public static function getEventNotes(rawEventsData:Array<Array<Dynamic>>, ?resultArray:Array<EventNote>):Array<EventNote>
+	public static function getEventNotes(rawEventsData:Array<Array<Dynamic>>, ?resultArray:Array<PsychEvent>):Array<PsychEvent>
 	{
 		if (resultArray==null) resultArray = [];
 		
@@ -739,7 +698,7 @@ class Song
 			var subEvents:Array<Array<Dynamic>> = event[1];
 
 			for (eventData in subEvents) {
-				var eventNote:EventNote = {
+				var eventNote:PsychEvent = {
 					strumTime: eventTime,
 					event: eventData[0],
 					value1: eventData[1],
@@ -752,39 +711,17 @@ class Song
 		return resultArray;
 	}
 
-	static public function loadSong(toPlay:Song, ?difficulty:String) {
-		Paths.currentModDirectory = toPlay.folder;
-
-		if (difficulty == null || difficulty == "") {
-			if (toPlay.charts.contains(DEFAULT_CHART_ID))
-				difficulty = DEFAULT_CHART_ID;
-			else
-				difficulty = toPlay.charts[0];
-		}
-
-		if (Main.showDebugTraces)
-			trace('loadSong', toPlay, difficulty);
-
-		PlayState.SONG = toPlay.getSwagSong(difficulty);
-		PlayState.difficulty = toPlay.charts.indexOf(difficulty);
-		PlayState.difficultyName = difficulty;
-		PlayState.isStoryMode = false;
-
-		PlayState.songPlaylist = [toPlay];
-		PlayState.songPlaylistIdx = 0;
-	}
-
 	static public function switchToPlayState()
 	{
 		if (FlxG.sound.music != null)
 			FlxG.sound.music.volume = 0;
 
-		LoadingState.loadAndSwitchState(new PlayState());	
+		LoadingState.loadAndSwitchState(new PlayState());
 	}
 
 	static public function playSong(song:Song, ?difficulty:String)
 	{
-		loadSong(song, difficulty);
+		PlayState.loadPlaylist([song], difficulty);
 		switchToPlayState();
 	} 
 }
